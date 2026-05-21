@@ -85,10 +85,25 @@ with col1:
     st.subheader("📊 Analisis Data")
     st.metric("Prediksi Debit Besok", f"{pred_discharge:.2f} m³/s")
     st.markdown(f"### Status: <span style='color:{color}'>{status}</span>", unsafe_allow_html=True)
-    st.subheader("🌧 Curah Hujan Historis (30 Hari)")
-    st.line_chart(df[['Rain_mm']].tail(30))
-    st.subheader("🌊 Debit Sungai Historis (30 Hari)")
-    st.line_chart(df[['Discharge_m3s']].tail(30))
+    
+    st.markdown("---")
+    
+    # Memastikan grafik tampil dengan pembungkus (expander) agar lebih rapi
+    with st.expander("Lihat Data Historis (30 Hari)", expanded=True):
+        st.write("🌧 **Curah Hujan**")
+        if not df.empty:
+            st.line_chart(df[['Rain_mm']].tail(30), height=250)
+        else:
+            st.warning("Data hujan tidak tersedia.")
+            
+        st.write("🌊 **Debit Sungai**")
+        if not df.empty:
+            st.line_chart(df[['Discharge_m3s']].tail(30), height=250)
+        else:
+            st.warning("Data debit tidak tersedia.")
+            
+    # Tambahan: Indikator data agar kita tahu sistem berjalan
+    st.caption(f"Update terakhir: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
 
 with col2:
     st.subheader("🛰 Validasi Spasial")
