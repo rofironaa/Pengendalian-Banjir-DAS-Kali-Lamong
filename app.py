@@ -13,7 +13,7 @@ from tensorflow.keras.layers import LSTM, Dense
 from sklearn.preprocessing import MinMaxScaler
 
 # =========================================================
-# 1. GOOGLE EARTH ENGINE AUTH (TANGGUH DENGAN BASE64)
+# 1. GOOGLE EARTH ENGINE AUTH
 # =========================================================
 def initialize_gee():
     try:
@@ -39,13 +39,12 @@ def initialize_gee():
 
 initialize_gee()
 
-# Fungsi Kustom: Jembatan EE ke Folium
 def add_ee_layer(self, ee_image_object, vis_params, name):
     try:
         map_id_dict = ee.Image(ee_image_object).getMapId(vis_params)
         folium.raster_layers.TileLayer(
             tiles=map_id_dict['tile_fetcher'].url_format,
-            attr='Map Data &copy; <a href="https://earthengine.google.com/">Google Earth Engine</a>',
+            attr='Map Data &copy; Google Earth Engine',
             name=name, overlay=True, control=True
         ).add_to(self)
     except: pass
@@ -81,7 +80,6 @@ model, scaler = train_lstm_model(df)
 # =========================================================
 st.set_page_config(layout="wide", page_title="Kali Lamong Flood EWS")
 st.title("🌊 Sistem Peringatan Dini Banjir DAS Kali Lamong")
-st.markdown("Prediksi debit sungai berbasis AI & Validasi genangan berbasis Sentinel-1.")
 
 # Prediksi Logika
 last_3 = scaler.transform(df.tail(3))
@@ -96,24 +94,23 @@ with col1:
     st.subheader("📊 Analisis Data")
     st.metric("Prediksi Debit Besok", f"{pred_discharge:.2f} m³/s")
     st.markdown(f"### Status: <span style='color:{color}'>{status}</span>", unsafe_allow_html=True)
-    st.subheader("🌧 Curah Hujan")
-    st.line_chart(df[['Rain_mm']].tail(30))
-    st.subheader("🌊 Debit Sungai")
     st.line_chart(df[['Discharge_m3s']].tail(30))
 
 with col2:
     st.subheader("🛰 Validasi Spasial")
-    with open("DAS.geojson") as f: geojson = json.load(f)
-    aoi = ee.Geometry(geojson['features'][0]['geometry'])
     
-    # Pemrosesan Sentinel-1 & JRC
+    # Memuat data sekali saja untuk efisiensi
+    if 'geojson' not in st.session_state:
+        with open("DAS.geojson") as f: st.session_state.geojson = json.load(f)
+    
+    aoi = ee.Geometry(st.session_state.geojson['features'][0]['geometry'])
+    
+    # Pemrosesan GEE
     end_date = datetime.now()
     start_date = end_date - timedelta(days=14)
-    
     s1 = ee.ImageCollection('COPERNICUS/S1_GRD').filterBounds(aoi).filterDate(start_date, end_date)\
         .filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VV')).select('VV').min().clip(aoi)
     
-    # Deteksi air (Flood Masking)
     allWater = s1.focal_median(30, 'circle', 'meters').lt(-16)
     jrc = ee.Image("JRC/GSW1_4/GlobalSurfaceWater").clip(aoi)
     permanentWater = jrc.select('occurrence').gt(40).unmask(0)
@@ -123,17 +120,22 @@ with col2:
     slope = ee.Terrain.slope(dem)
     finalFlood = floodWater.updateMask(floodWater.gt(0).And(slope.lt(5)))
     
-    # Rendering Map
-    Map = folium.Map(location=[aoi.centroid().coordinates().get(1).getInfo(), aoi.centroid().coordinates().get(0).getInfo()], zoom_start=11)
-    batas_das = folium.GeoJson(geojson, name="Boundary DAS", style_function=lambda x: {'color': 'red', 'fill': False, 'weight': 3})
-    batas_das.add_to(Map)
-    Map.fit_bounds(batas_das.get_bounds())
+    # Rendering Map dengan 'key' yang stabil
+    centroid = aoi.centroid().coordinates().getInfo()
+    Map = folium.Map(location=[centroid[1], centroid[0]], zoom_start=11)
     
-    Map.add_ee_layer(dem, {'min': 0, 'max': 100, 'palette': ['black', 'green', 'white']}, 'Elevasi (DEM)')
+    batas_das = folium.GeoJson(st.session_state.geojson, name="Boundary DAS", 
+                               style_function=lambda x: {'color': 'red', 'fill': False, 'weight': 3})
+    batas_das.add_to(Map)
+    
+    Map.add_ee_layer(dem, {'min': 0, 'max': 100, 'palette': ['blue', 'green', 'red']}, 'Elevasi (DEM)')
     Map.add_ee_layer(permanentWater.updateMask(permanentWater), {'palette': ['blue']}, 'Air Permanen')
     Map.add_ee_layer(finalFlood, {'palette': ['cyan']}, 'Genangan Banjir Baru')
+    
     folium.LayerControl(collapsed=False).add_to(Map)
-    st_folium(Map, width=800, height=500)
+    
+    # Key 'map_kali_lamong' menjaga kestabilan komponen saat interaksi
+    st_folium(Map, width=800, height=500, key="map_kali_lamong")
 
 st.markdown("---")
 st.markdown("### 🔧 Teknologi: Streamlit | TensorFlow LSTM | GEE | Sentinel-1 SAR | Folium")
