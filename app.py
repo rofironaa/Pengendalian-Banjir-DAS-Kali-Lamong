@@ -4,34 +4,40 @@ import pandas as pd
 import ee
 import json
 import os
+import base64
 from datetime import datetime, timedelta
 import folium
 from streamlit_folium import st_folium 
 
 # =========================================================
-# 1. GOOGLE EARTH ENGINE AUTH & INIT (HARDENED)
+# 1. GOOGLE EARTH ENGINE AUTH & INIT (BASE64 DECODED)
 # =========================================================
 def initialize_gee():
+    # Cek apakah sudah terinisialisasi
     try:
-        # Coba inisialisasi tanpa argumen (jika sudah ada kredensial di environment)
-        ee.Initialize()
+        ee.data.getAssetRoots()
         return
-    except Exception:
+    except:
         pass
 
     try:
-        # Jika tidak ada, gunakan Service Account dari Secrets
+        # Baca dari Secrets
         if "GOOGLE_APPLICATION_CREDENTIALS" in st.secrets:
-            creds_dict = dict(st.secrets["GOOGLE_APPLICATION_CREDENTIALS"])
+            # Ambil string base64
+            b64_json = st.secrets["GOOGLE_APPLICATION_CREDENTIALS"]["base64_json"]
             
-            # Tulis ke file sementara
+            # Decode kembali ke string JSON
+            json_data = base64.b64decode(b64_json).decode('utf-8')
+            creds = json.loads(json_data)
+            
+            # Simpan ke file sementara yang bersih
             json_path = "service_account.json"
             with open(json_path, "w") as f:
-                json.dump(creds_dict, f)
+                f.write(json_data)
             
             # Gunakan ServiceAccountCredentials secara eksplisit
             credentials = ee.ServiceAccountCredentials(
-                email=creds_dict['client_email'], 
+                email=creds['client_email'], 
                 key_file=json_path
             )
             ee.Initialize(credentials=credentials)
@@ -86,7 +92,6 @@ col1, col2 = st.columns([1, 2])
 
 with col1:
     st.subheader("📊 Analisis Data")
-    # Simulasi data
     val = 20 + np.random.rand()*30
     st.metric(label="Prediksi Debit Besok", value=f"{val:.2f} m³/s")
     st.line_chart(np.random.randn(30, 1))
