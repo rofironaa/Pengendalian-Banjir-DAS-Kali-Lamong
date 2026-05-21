@@ -128,7 +128,7 @@ with col2:
     
     # 2. RENDER PETA
     centroid = aoi.centroid().coordinates().getInfo()
-    Map = folium.Map(location=[centroid[1], centroid[0]], zoom_start=11, tiles="CartoDB positron")
+    Map = folium.Map(location=[centroid[1], centroid[0]], zoom_start=11, tiles="OpenStreetMap")
     
     # Tambahkan Boundary
     folium.GeoJson(st.session_state.geojson, name="Boundary DAS", 
