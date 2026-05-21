@@ -136,7 +136,7 @@ with col2:
     
     # URUTAN LAYER (PENTING: Urutan penambahan mempengaruhi layer yang di atas/bawah)
     # Layer 1: DEM (Transparan agar tidak menutup peta dasar)
-    Map.add_ee_layer(dem, {'min': 0, 'max': 100, 'palette': ['#f0f0f0', '#d9d9d9', '#bdbdbd']}, 'Elevasi (DEM)')
+    Map.add_ee_layer(dem, {'min': 0, 'max': 100, 'palette': ['blue', 'green', 'yellow', 'orange', 'red']}, 'Elevasi (DEM)')
     
     # Layer 2: Air Permanen
     Map.add_ee_layer(permanent_water.updateMask(permanent_water), {'palette': ['#00008B']}, 'Badan Air Permanen')
