@@ -12,24 +12,26 @@ import folium
 from streamlit_folium import st_folium 
 
 # =========================================================
-# 1. GOOGLE EARTH ENGINE AUTH & INIT (SERVICE ACCOUNT)
+# 1. GOOGLE EARTH ENGINE AUTH & INIT (SERVICE ACCOUNT SAFE)
 # =========================================================
 def initialize_gee():
-    # Jika sudah terinisialisasi, lewati
-    if ee.data._credentials:
-        return
-        
+    # Cek apakah sudah terinisialisasi dengan mencoba mengambil info proyek
+    try:
+        ee.data.getAssetRoots()
+        return # Sudah inisialisasi, lanjut ke proses berikutnya
+    except:
+        pass # Belum inisialisasi, lanjut ke blok try di bawah
+
     try:
         # Coba ambil kredensial dari Secrets (Cloud Deployment)
         if "GOOGLE_APPLICATION_CREDENTIALS" in st.secrets:
             creds = dict(st.secrets["GOOGLE_APPLICATION_CREDENTIALS"])
-            # Simpan ke file JSON sementara untuk dibaca library ee
             with open("service_account.json", "w") as f:
                 json.dump(creds, f)
             os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "service_account.json"
             ee.Initialize()
         else:
-            # Fallback untuk lokal (jika tidak ada secrets)
+            # Fallback untuk lingkungan lokal
             ee.Initialize()
     except Exception as e:
         st.error(f"Gagal inisialisasi Earth Engine: {e}")
@@ -66,7 +68,7 @@ aoi = ee.Geometry(geojson_data['features'][0]['geometry'])
 centroid = aoi.centroid().coordinates().getInfo()
 lon, lat = centroid
 
-# Model & Data (Simplified)
+# Model & Data
 @st.cache_data
 def generate_synthetic_data():
     dates = pd.date_range(start='2020-01-01', periods=100, freq='D')
