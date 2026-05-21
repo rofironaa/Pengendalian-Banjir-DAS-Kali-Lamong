@@ -128,7 +128,7 @@ with col2:
                                style_function=lambda x: {'color': 'red', 'fill': False, 'weight': 3})
     batas_das.add_to(Map)
     
-    Map.add_ee_layer(dem, {'min': 0, 'max': 100, 'palette': ['blue', 'green', 'red']}, 'Elevasi (DEM)')
+    Map.add_ee_layer(dem, {'min': 0, 'max': 100, 'palette': ['blue', 'green', 'yellow', 'orange', 'red']}, 'Elevasi (DEM)')
     Map.add_ee_layer(permanentWater.updateMask(permanentWater), {'palette': ['blue']}, 'Air Permanen')
     Map.add_ee_layer(finalFlood, {'palette': ['cyan']}, 'Genangan Banjir Baru')
     
