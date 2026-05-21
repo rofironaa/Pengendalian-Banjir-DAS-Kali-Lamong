@@ -45,14 +45,14 @@ def add_ee_layer(self, ee_image_object, vis_params, name):
         map_id_dict = ee.Image(ee_image_object).getMapId(vis_params)
         folium.raster_layers.TileLayer(
             tiles=map_id_dict['tile_fetcher'].url_format,
-            attr='Map Data &copy; Google Earth Engine',
+            attr='Map Data &copy; <a href="https://earthengine.google.com/">Google Earth Engine</a>',
             name=name, overlay=True, control=True
         ).add_to(self)
     except: pass
 folium.Map.add_ee_layer = add_ee_layer
 
 # =========================================================
-# 2. DATA & MODEL LSTM (DARI KODE 2)
+# 2. DATA & MODEL LSTM
 # =========================================================
 @st.cache_data
 def generate_synthetic_data():
@@ -81,8 +81,9 @@ model, scaler = train_lstm_model(df)
 # =========================================================
 st.set_page_config(layout="wide", page_title="Kali Lamong Flood EWS")
 st.title("🌊 Sistem Peringatan Dini Banjir DAS Kali Lamong")
+st.markdown("Prediksi debit sungai berbasis AI & Validasi genangan berbasis Sentinel-1.")
 
-# Prediksi
+# Prediksi Logika
 last_3 = scaler.transform(df.tail(3))
 pred_val = model.predict(np.array([last_3]))[0][0]
 pred_discharge = scaler.inverse_transform([[0, pred_val]])[0, 1]
@@ -95,6 +96,9 @@ with col1:
     st.subheader("📊 Analisis Data")
     st.metric("Prediksi Debit Besok", f"{pred_discharge:.2f} m³/s")
     st.markdown(f"### Status: <span style='color:{color}'>{status}</span>", unsafe_allow_html=True)
+    st.subheader("🌧 Curah Hujan")
+    st.line_chart(df[['Rain_mm']].tail(30))
+    st.subheader("🌊 Debit Sungai")
     st.line_chart(df[['Discharge_m3s']].tail(30))
 
 with col2:
@@ -102,12 +106,34 @@ with col2:
     with open("DAS.geojson") as f: geojson = json.load(f)
     aoi = ee.Geometry(geojson['features'][0]['geometry'])
     
-    # Sentinel-1 & Flood Processing
-    s1 = ee.ImageCollection('COPERNICUS/S1_GRD').filterBounds(aoi).filterDate(datetime.now()-timedelta(14), datetime.now()).select('VV').min().clip(aoi)
-    flood = s1.focal_median(30, 'circle', 'meters').lt(-16).updateMask(ee.Terrain.slope(ee.Image("USGS/SRTMGL1_003").clip(aoi)).lt(5))
+    # Pemrosesan Sentinel-1 & JRC
+    end_date = datetime.now()
+    start_date = end_date - timedelta(days=14)
     
+    s1 = ee.ImageCollection('COPERNICUS/S1_GRD').filterBounds(aoi).filterDate(start_date, end_date)\
+        .filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VV')).select('VV').min().clip(aoi)
+    
+    # Deteksi air (Flood Masking)
+    allWater = s1.focal_median(30, 'circle', 'meters').lt(-16)
+    jrc = ee.Image("JRC/GSW1_4/GlobalSurfaceWater").clip(aoi)
+    permanentWater = jrc.select('occurrence').gt(40).unmask(0)
+    floodWater = allWater.And(permanentWater.Not())
+    
+    dem = ee.Image("USGS/SRTMGL1_003").clip(aoi)
+    slope = ee.Terrain.slope(dem)
+    finalFlood = floodWater.updateMask(floodWater.gt(0).And(slope.lt(5)))
+    
+    # Rendering Map
     Map = folium.Map(location=[aoi.centroid().coordinates().get(1).getInfo(), aoi.centroid().coordinates().get(0).getInfo()], zoom_start=11)
-    folium.GeoJson(geojson, name="DAS", style_function=lambda x: {'color': 'red', 'fill': False}).add_to(Map)
-    Map.add_ee_layer(flood.updateMask(flood.gt(0)), {'palette': ['cyan']}, 'Genangan Air')
-    folium.LayerControl().add_to(Map)
+    batas_das = folium.GeoJson(geojson, name="Boundary DAS", style_function=lambda x: {'color': 'red', 'fill': False, 'weight': 3})
+    batas_das.add_to(Map)
+    Map.fit_bounds(batas_das.get_bounds())
+    
+    Map.add_ee_layer(dem, {'min': 0, 'max': 100, 'palette': ['black', 'green', 'white']}, 'Elevasi (DEM)')
+    Map.add_ee_layer(permanentWater.updateMask(permanentWater), {'palette': ['blue']}, 'Air Permanen')
+    Map.add_ee_layer(finalFlood, {'palette': ['cyan']}, 'Genangan Banjir Baru')
+    folium.LayerControl(collapsed=False).add_to(Map)
     st_folium(Map, width=800, height=500)
+
+st.markdown("---")
+st.markdown("### 🔧 Teknologi: Streamlit | TensorFlow LSTM | GEE | Sentinel-1 SAR | Folium")
