@@ -106,56 +106,46 @@ with col1:
     st.caption(f"Update terakhir: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
 
 with col2:
-    st.subheader("🛰 Validasi Spasial: Deteksi Genangan")
-
-    end_date = datetime.now().strftime('%Y-%m-%d')
-    start_date = (datetime.now() - timedelta(days=14)).strftime('%Y-%m-%d')
-
-    # Proses Earth Engine (Tetap sama, kalkulasi dilakukan di server Google)
-    s1 = ee.ImageCollection('COPERNICUS/S1_GRD').filterBounds(aoi).filterDate(start_date, end_date)\
-        .filter(ee.Filter.eq('instrumentMode', 'IW')).filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VV')).select('VV')
+    st.subheader("🛰 Validasi Spasial")
+    if 'geojson' not in st.session_state:
+        with open("DAS.geojson") as f: st.session_state.geojson = json.load(f)
     
-    s1_latest = s1.min().clip(aoi)
-    smoothed = s1_latest.focal_median(30, 'circle', 'meters')
-    allWater = smoothed.lt(-16)
+    aoi = ee.Geometry(st.session_state.geojson['features'][0]['geometry'])
     
+    # 1. PENGOLAHAN DATA
+    s1 = ee.ImageCollection('COPERNICUS/S1_GRD').filterBounds(aoi).filterDate(datetime.now()-timedelta(14), datetime.now()).select('VV').min().clip(aoi)
+    # JRC untuk membedakan air permanen dan banjir
     jrc = ee.Image("JRC/GSW1_4/GlobalSurfaceWater").clip(aoi)
-    permanentWater = jrc.select('occurrence').gt(40).unmask(0)
-    floodWater = allWater.And(permanentWater.Not())
+    permanent_water = jrc.select('occurrence').gt(40).unmask(0)
     
+    # Deteksi Genangan (Air S1 yg bukan air permanen)
+    flood = s1.focal_median(30, 'circle', 'meters').lt(-16).And(permanent_water.Not())
+    
+    # DEM dengan slope masking agar lebih halus
     dem = ee.Image("USGS/SRTMGL1_003").clip(aoi)
     slope = ee.Terrain.slope(dem)
-    finalFloodMask = floodWater.updateMask(floodWater.gt(0).And(slope.lt(5)))
-
-    # =====================================================
-    # MAP RENDER (DIREKAYASA ULANG TANPA GEEMAP)
-    # =====================================================
-    # Inisialisasi Peta
-    Map = folium.Map(location=[lat, lon], tiles='OpenStreetMap')
-
-    # 1. Simpan layer GeoJSON ke dalam variabel
-    batas_das = folium.GeoJson(
-        data=geojson_data,
-        name="Boundary DAS",
-        style_function=lambda x: {'fillColor': '#00000000', 'color': 'red', 'weight': 3}
-    )
+    final_flood = flood.updateMask(flood.gt(0).And(slope.lt(5)))
     
-    # 2. Tambahkan garis batas DAS ke peta
-    batas_das.add_to(Map)
-
-    # 3. KUNCI PERBAIKAN: Paksa kamera peta untuk auto-zoom pas ke batas DAS
-    Map.fit_bounds(batas_das.get_bounds())
-
-    # Tambahkan Layer Earth Engine melalui jembatan kustom kita
-    Map.add_ee_layer(dem, {'min': 0, 'max': 50, 'palette': ['blue', 'green', 'yellow', 'orange', 'red']}, 'DEM')
-    Map.add_ee_layer(permanentWater.updateMask(permanentWater), {'palette': ['00008B']}, 'Badan Air Permanen')
-    Map.add_ee_layer(finalFloodMask, {'palette': ['00FFFF']}, f'Genangan ({start_date} s/d {end_date})')
-
-    # Tambahkan kontrol layer agar bisa di-ceklis/un-ceklis
+    # 2. RENDER PETA
+    centroid = aoi.centroid().coordinates().getInfo()
+    Map = folium.Map(location=[centroid[1], centroid[0]], zoom_start=11, tiles="CartoDB positron")
+    
+    # Tambahkan Boundary
+    folium.GeoJson(st.session_state.geojson, name="Boundary DAS", 
+                   style_function=lambda x: {'color': 'red', 'fill': False, 'weight': 2.5}).add_to(Map)
+    
+    # URUTAN LAYER (PENTING: Urutan penambahan mempengaruhi layer yang di atas/bawah)
+    # Layer 1: DEM (Transparan agar tidak menutup peta dasar)
+    Map.add_ee_layer(dem, {'min': 0, 'max': 100, 'palette': ['#f0f0f0', '#d9d9d9', '#bdbdbd']}, 'Elevasi (DEM)')
+    
+    # Layer 2: Air Permanen
+    Map.add_ee_layer(permanent_water.updateMask(permanent_water), {'palette': ['#00008B']}, 'Badan Air Permanen')
+    
+    # Layer 3: Genangan (Paling atas)
+    Map.add_ee_layer(final_flood.updateMask(final_flood), {'palette': ['#00FFFF']}, 'Genangan Banjir Baru')
+    
     folium.LayerControl(collapsed=False).add_to(Map)
-
-    # Render ke Streamlit
-    st_folium(Map, width=800, height=700)
+    st_folium(Map, width=800, height=600, key="map_stable")
 
 st.markdown("---")
 st.markdown("### 🔧 Teknologi: Streamlit | TensorFlow LSTM | GEE | Sentinel-1 SAR | Folium")
