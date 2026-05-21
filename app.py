@@ -39,40 +39,40 @@ def initialize_gee():
 
 initialize_gee()
 
-# Fungsi Jembatan EE ke Folium
+# Fungsi Kustom: Jembatan EE ke Folium
 def add_ee_layer(self, ee_image_object, vis_params, name):
-    map_id_dict = ee.Image(ee_image_object).getMapId(vis_params)
-    folium.raster_layers.TileLayer(
-        tiles=map_id_dict['tile_fetcher'].url_format,
-        attr='Map Data &copy; <a href="https://earthengine.google.com/">Google Earth Engine</a>',
-        name=name, overlay=True, control=True
-    ).add_to(self)
+    try:
+        map_id_dict = ee.Image(ee_image_object).getMapId(vis_params)
+        folium.raster_layers.TileLayer(
+            tiles=map_id_dict['tile_fetcher'].url_format,
+            attr='Map Data &copy; Google Earth Engine',
+            name=name, overlay=True, control=True
+        ).add_to(self)
+    except: pass
 folium.Map.add_ee_layer = add_ee_layer
 
 # =========================================================
-# 2. LOGIKA MODEL LSTM (DARI KODE 2)
+# 2. DATA & MODEL LSTM (DARI KODE 2)
 # =========================================================
 @st.cache_data
 def generate_synthetic_data():
     dates = pd.date_range(start='2020-01-01', periods=1000, freq='D')
     rain = np.random.gamma(shape=1.5, scale=10, size=1000)
     discharge = 20 + (rain * 1.5) + np.random.normal(0, 5, 1000)
-    return pd.DataFrame({'Date': dates, 'Rain_mm': rain, 'Discharge_m3s': discharge}).set_index('Date')
+    return pd.DataFrame({'Rain_mm': rain, 'Discharge_m3s': discharge}, index=dates)
 
 @st.cache_resource
 def train_lstm_model(data):
     scaler = MinMaxScaler()
-    scaled_data = scaler.fit_transform(data[['Rain_mm', 'Discharge_m3s']])
+    scaled = scaler.fit_transform(data)
     X, Y = [], []
-    for i in range(3, len(scaled_data)):
-        X.append(scaled_data[i-3:i, :])
-        Y.append(scaled_data[i, 1])
+    for i in range(3, len(scaled)):
+        X.append(scaled[i-3:i, :]); Y.append(scaled[i, 1])
     model = Sequential([LSTM(32, input_shape=(3, 2)), Dense(1)])
     model.compile(optimizer='adam', loss='mse')
     model.fit(np.array(X), np.array(Y), epochs=5, verbose=0)
     return model, scaler
 
-# Load Data
 df = generate_synthetic_data()
 model, scaler = train_lstm_model(df)
 
@@ -82,27 +82,32 @@ model, scaler = train_lstm_model(df)
 st.set_page_config(layout="wide", page_title="Kali Lamong Flood EWS")
 st.title("🌊 Sistem Peringatan Dini Banjir DAS Kali Lamong")
 
-# Load GeoJSON
-with open("DAS.geojson") as f:
-    geojson_data = json.load(f)
-aoi = ee.Geometry(geojson_data['features'][0]['geometry'])
-centroid = aoi.centroid().coordinates().getInfo()
-lon, lat = centroid
-
-# Prediksi & Status
-last_3 = scaler.transform(df.tail(3)[['Rain_mm', 'Discharge_m3s']])
-pred_discharge = scaler.inverse_transform([[0, model.predict(np.array([last_3]))[0][0]]])[0, 1]
+# Prediksi
+last_3 = scaler.transform(df.tail(3))
+pred_val = model.predict(np.array([last_3]))[0][0]
+pred_discharge = scaler.inverse_transform([[0, pred_val]])[0, 1]
+status = "AMAN" if pred_discharge < 35 else "WASPADA" if pred_discharge < 50 else "BAHAYA"
+color = "green" if status == "AMAN" else "orange" if status == "WASPADA" else "red"
 
 col1, col2 = st.columns([1, 2])
+
 with col1:
     st.subheader("📊 Analisis Data")
     st.metric("Prediksi Debit Besok", f"{pred_discharge:.2f} m³/s")
-    status = "AMAN" if pred_discharge < 35 else "WASPADA" if pred_discharge < 50 else "BAHAYA"
-    st.markdown(f"### Status: {status}")
+    st.markdown(f"### Status: <span style='color:{color}'>{status}</span>", unsafe_allow_html=True)
     st.line_chart(df[['Discharge_m3s']].tail(30))
 
 with col2:
     st.subheader("🛰 Validasi Spasial")
-    # (Proses Sentinel-1 & Map Rendering sesuai Kode 2 Anda)
-    # [Tambahkan logika pemrosesan S1 dan Rendering Map di sini]
-    st.info("Peta sedang dimuat...")
+    with open("DAS.geojson") as f: geojson = json.load(f)
+    aoi = ee.Geometry(geojson['features'][0]['geometry'])
+    
+    # Sentinel-1 & Flood Processing
+    s1 = ee.ImageCollection('COPERNICUS/S1_GRD').filterBounds(aoi).filterDate(datetime.now()-timedelta(14), datetime.now()).select('VV').min().clip(aoi)
+    flood = s1.focal_median(30, 'circle', 'meters').lt(-16).updateMask(ee.Terrain.slope(ee.Image("USGS/SRTMGL1_003").clip(aoi)).lt(5))
+    
+    Map = folium.Map(location=[aoi.centroid().coordinates().get(1).getInfo(), aoi.centroid().coordinates().get(0).getInfo()], zoom_start=11)
+    folium.GeoJson(geojson, name="DAS", style_function=lambda x: {'color': 'red', 'fill': False}).add_to(Map)
+    Map.add_ee_layer(flood.updateMask(flood.gt(0)), {'palette': ['cyan']}, 'Genangan Air')
+    folium.LayerControl().add_to(Map)
+    st_folium(Map, width=800, height=500)
